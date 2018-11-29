@@ -15,16 +15,17 @@
 # You should have received a copy of the GNU General Public License
 # along with jmdict-to-sqlite3. If not, see <http://www.gnu.org/licenses/>.
 
+# todo, remove sep
+# group each kanji and meaning
+
 import sys
 import os
 import time
 import sqlite3
 import xml.etree.ElementTree
+import copy
 
-
-
-
-def jmdict_to_sqlite3(input, output, lang=''):
+def jmdict_to_sqlite3(input, output):
     """
     Transforms a JMDict-XML-file to a SQLite3-database
     :param input: Path to input XML file
@@ -36,13 +37,13 @@ def jmdict_to_sqlite3(input, output, lang=''):
     :return: None
     """
     #if lang=en is used we unset lang for standard behaviour
-    if lang =='eng':
-        lang = ''
+    # if lang =='eng':
+    #     lang = ''
 
     print('Input file: %s' % input)
     print('Output file: %s' % output)
-    if lang != '':
-        print('Using lang: %s' % lang)
+    # if lang != '':
+    #     print('Using lang: %s' % lang)
 
     if not os.path.isfile(input):
         raise IOError('Input file %s not found' % input)
@@ -63,7 +64,7 @@ def jmdict_to_sqlite3(input, output, lang=''):
     cursor=connection.cursor()
 
     cursor.execute('CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT)')
-    cursor.execute('CREATE TABLE entry (id INT PRIMARY KEY, kanji TEXT, reading TEXT, gloss TEXT, position TEXT)')
+    cursor.execute('CREATE TABLE entry (word_first TEXT, words TEXT, details TEXT, freq TEXT)')
 
     connection.commit()
 
@@ -78,50 +79,128 @@ def jmdict_to_sqlite3(input, output, lang=''):
 
     #Parsing
 
-    for element in root.findall('entry'):
-        id = 0
-        kanji = ''
-        reading = ''
-        gloss = ''
-        gloss_en = ''
-        position = ''
+    myDict = {}
 
-        for value in element.iter():
+    for entry in root.findall('entry'):
+        id = 0
+        word_first = ''
+        words = ''
+        details = ''
+        freq = ''
+
+        sep = 0
+
+        details += '<div class="jmdict-entry">\n'
+
+        for value in entry.iter():
+
             if value.tag == 'ent_seq':
                 id = value.text
+
             elif value.tag == 'k_ele':
+
+                # get words
                 for k_ele in value.findall('keb'):
-                    if kanji != '':
-                        kanji += ', '
-                    kanji += k_ele.text
+                    # word_first
+                    if word_first == '':
+                        word_first = k_ele.text
+
+                    # all words, word_first + alternatives
+                    words += k_ele.text + ' '
+
+                details += '    <div class="word">' + k_ele.text + '</div>\n'
+
+                # get frequency tags
+                for ke_pri in value.findall('ke_pri'):
+                    freq += ke_pri.text + ' '
+
+
             elif value.tag == 'r_ele':
+
+                # separator between words and readings
+                if sep == 0:
+                    details += '    <div class="sep"></div>\n'
+                    sep = 1
+
                 for r_ele in value.findall('reb'):
                     if r_ele.find('re_restr') is None:
-                        if reading != '':
-                            reading += ', '
-                        reading += r_ele.text
-            elif value.tag == 'sense':
-                for sense in value.findall('gloss'):
-                    if lang == '':
-                        if gloss != '':
-                            gloss += ', '
-                        gloss += sense.text
-                    elif lang in sense.attrib.values():
-                        if gloss != '':
-                            gloss += ', '
-                        gloss += sense.text
-                    elif 'eng' in sense.attrib.values():
-                        if gloss_en != '':
-                            gloss_en += ', '
-                        gloss_en += sense.text
-                for sense in value.findall('pos'):
-                        if position != '':
-                            position += ', '
-                        position += sense.text
+                        details += '    <div class="reading">' + r_ele.text + '</div>\n'
 
-        if id != 0 and position != '':
+                        # If it's a kana only word, put the reading as the key word.
+                        if words == '':
+                            words = r_ele.text
+                        if word_first == '':
+                            word_first = r_ele.text
+
+
+            elif value.tag == 'sense':
+                details += '    <div class="sense">\n'
+
+                details += '        <div class="misc">\n'
+                for misc in value.findall('misc'):
+                    details += '            <span>' + misc.text + '</span>\n'
+                details += '        </div>\n'
+    
+                details += '        <div class="field">\n'
+                for field in value.findall('field'):
+                    details += '            <span>' + field.text + '</span>\n'
+                details += '        </div>\n'
+
+                details += '        <div class="dial">\n'
+                for dial in value.findall('dial'):
+                    details += '            <span>' + dial.text + '</span>\n'
+                details += '        </div>\n'
+
+                details += '        <div class="pos">\n'
+                for pos in value.findall('pos'):
+                    details += '            <div>' + pos.text + '</div>\n'
+                details += '        </div>\n'
+
+                details += '        <ol class="gloss">\n'
+                for gloss in value.findall('gloss'):
+                    details += '            <li>' + gloss.text + '</li>\n'
+                details += '        </ol>\n'
+
+                details += '    </div>\n'
+
+        details += '</div>\n'
+
+        if word_first not in myDict:
+            # if it's a new element, we'll create
+            myDict[word_first] = {};
+            myDict[word_first]["words"] = words;
+            myDict[word_first]["id"] = id;
+            myDict[word_first]["details"] = details;
+            myDict[word_first]["freq"] = freq;
+        else:
+            # if it's not a new element, we'll concatenate existing details
+            myDict[word_first]["details"] += details;
+            myDict[word_first]["freq"] += freq;
+
+    # create duplicate rows if it has multiple way to write in kanji.
+    # this part is useful if you want to update an existing anki deck that uses alternative form
+    # NOTE: comment this section if you want each row to have unique "details" field
+    myDictOriTemp = copy.deepcopy(myDict)
+    for key, value in myDictOriTemp.iteritems():
+        words = value["words"].split()
+        for valueInner in words:
+            # valueInner is each of the alternative writing
+            if valueInner not in myDict:
+                myDict[valueInner] = copy.deepcopy(myDictOriTemp[key])
+            elif key != valueInner:
+                # if it's already exist, but from different key row, we'll concatenate existing details
+                myDict[valueInner]["details"] += value["details"];
+                myDict[valueInner]["freq"] += value["freq"];
+
+
+    # execute SQLs from myDict
+    for key, value in myDict.iteritems():
+        # key is the word_first itself
+        # values is myDict[key]
+
+        if value["id"] != 0 :
             converted += 1
-            cursor.execute('INSERT INTO entry VALUES (?, ?, ?, ?, ?)', (id, kanji, reading, gloss if gloss != '' else gloss_en, position))
+            cursor.execute('INSERT INTO entry VALUES (?, ?, ?, ?)', (key, value["words"], value["details"], value["freq"]))
         else:
             not_converted += 1
 
