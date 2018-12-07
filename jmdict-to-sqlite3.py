@@ -64,7 +64,7 @@ def jmdict_to_sqlite3(input, output):
     cursor=connection.cursor()
 
     cursor.execute('CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT)')
-    cursor.execute('CREATE TABLE entry (word_first TEXT, words TEXT, details TEXT, freq TEXT)')
+    cursor.execute('CREATE TABLE entry (key TEXT, words TEXT, details TEXT, freq TEXT)')
 
     connection.commit()
 
@@ -83,7 +83,6 @@ def jmdict_to_sqlite3(input, output):
 
     for entry in root.findall('entry'):
         id = 0
-        word_first = ''
         words = ''
         details = ''
         freq = ''
@@ -101,11 +100,8 @@ def jmdict_to_sqlite3(input, output):
 
                 # get words
                 for k_ele in value.findall('keb'):
-                    # word_first
-                    if word_first == '':
-                        word_first = k_ele.text
 
-                    # all words, word_first + alternatives
+                    # all words
                     words += k_ele.text + ' '
 
                 details += '    <div class="word">' + k_ele.text + '</div>\n'
@@ -128,10 +124,7 @@ def jmdict_to_sqlite3(input, output):
 
                         # If it's a kana only word, put the reading as the key word.
                         if words == '':
-                            words = r_ele.text
-                        if word_first == '':
-                            word_first = r_ele.text
-
+                            words += r_ele.text + " "
 
             elif value.tag == 'sense':
                 details += '    <div class="sense">\n'
@@ -165,36 +158,36 @@ def jmdict_to_sqlite3(input, output):
 
         details += '</div>\n'
 
-        if word_first not in myDict:
+        if words not in myDict:
             # if it's a new element, we'll create
-            myDict[word_first] = {};
-            myDict[word_first]["words"] = words;
-            myDict[word_first]["id"] = id;
-            myDict[word_first]["details"] = details;
-            myDict[word_first]["freq"] = freq;
+            myDict[words] = {};
+            myDict[words]["id"] = id;
+            myDict[words]["words"] = words;
+            myDict[words]["details"] = details;
+            myDict[words]["freq"] = freq;
         else:
             # if it's not a new element, we'll concatenate existing details
-            myDict[word_first]["details"] += details;
-            myDict[word_first]["freq"] += freq;
+            myDict[words]["details"] += details;
+            myDict[words]["freq"] += freq;
 
     # create duplicate rows if it has multiple way to write in kanji.
     # this part is useful if you want to update an existing anki deck that uses alternative form
     # NOTE: comment this section if you want each row to have unique "details" field
-    myDictOriTemp = copy.deepcopy(myDict)
-    for key, value in myDictOriTemp.iteritems():
-        words = value["words"].split()
-        for valueInner in words:
+    myDictFin = {}
+    for key, value in myDict.iteritems():
+        words = key.split(" ")
+        for singleWord in words:
             # valueInner is each of the alternative writing
-            if valueInner not in myDict:
-                myDict[valueInner] = copy.deepcopy(myDictOriTemp[key])
+            if singleWord not in myDict:
+                myDictFin[singleWord] = copy.deepcopy(myDict[key])
             elif key != valueInner:
                 # if it's already exist, but from different key row, we'll concatenate existing details
-                myDict[valueInner]["details"] += value["details"];
-                myDict[valueInner]["freq"] += value["freq"];
+                myDictFin[singleWord]["details"] += value["details"];
+                myDictFin[singleWord]["freq"] += value["freq"];
 
 
     # execute SQLs from myDict
-    for key, value in myDict.iteritems():
+    for key, value in myDictFin.iteritems():
         # key is the word_first itself
         # values is myDict[key]
 
